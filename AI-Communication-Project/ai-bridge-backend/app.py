@@ -38,8 +38,12 @@ from config import *
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', SECRET_KEY)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+ALLOWED_ORIGINS = [
+    os.getenv('FRONTEND_URL', 'https://wesal-ai-bridge.vercel.app')
+]
+
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='threading')
 
 # --- 1. Database Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -49,7 +53,13 @@ db = SQLAlchemy(app)
 
 # Persistent temp directory for generated audio
 TTS_TEMP_DIR = os.path.join(basedir, 'tts_audio')
-os.makedirs(TTS_TEMP_DIR, exist_ok=True)
+
+
+def ensure_tts_temp_dir():
+    os.makedirs(TTS_TEMP_DIR, exist_ok=True)
+
+
+ensure_tts_temp_dir()
 
 # ===== USER MODEL (NEW) =====
 class User(db.Model):
@@ -190,6 +200,7 @@ def tts_model_sync(text, language):
     if not text or not text.strip():
         raise ValueError('Text is required for TTS generation.')
 
+    ensure_tts_temp_dir()
     output_path = os.path.join(TTS_TEMP_DIR, f"wesal_gesture_{uuid.uuid4().hex}.mp3")
     return asyncio.run(edge_tts_to_file(text.strip(), language, output_path))
 
@@ -227,6 +238,7 @@ def speak_gesture():
 
 @app.route('/api/audio/<filename>', methods=['GET'])
 def serve_audio(filename):
+    ensure_tts_temp_dir()
     safe_name = os.path.basename(filename)
     path = os.path.join(TTS_TEMP_DIR, safe_name)
     if not os.path.exists(path):
@@ -554,6 +566,6 @@ atexit.register(release_resources)
 
 if __name__ == '__main__':
     try:
-        socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+        socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
     finally:
         release_resources()
