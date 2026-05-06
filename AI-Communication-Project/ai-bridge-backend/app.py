@@ -59,9 +59,8 @@ IS_PRODUCTION = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILW
 #       because browsers reject credentialed requests to a wildcard origin.
 #       We never mix "*" with supports_credentials=True.
 if IS_PRODUCTION:
-    _frontend_url = os.getenv("FRONTEND_URL", "https://wesal-ai-bridge.vercel.app")
-    ALLOWED_ORIGINS = [_frontend_url]
-    CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
+    ALLOWED_ORIGINS = "*"
+    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 else:
     ALLOWED_ORIGINS = "*"
     CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
