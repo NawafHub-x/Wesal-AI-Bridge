@@ -14,6 +14,7 @@ from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
 import numpy as np
 import cv2
+from gtts import gTTS
 try:
     import mediapipe as mp
     from mediapipe.tasks import python
@@ -57,14 +58,10 @@ IS_PRODUCTION = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILW
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ── Socket.IO ─────────────────────────────────────────────────────────────────
-# async_mode="gevent"  → Railway/production (gunicorn + gevent workers)
-# async_mode=None      → local dev (Flask-SocketIO auto-selects threading/eventlet)
-SOCKETIO_ASYNC_MODE = "gevent" if IS_PRODUCTION else None
-
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode=SOCKETIO_ASYNC_MODE,
+    async_mode="gevent",
 )
 
 @app.route('/', methods=['GET'])
@@ -238,7 +235,16 @@ def tts_model_sync(text, language):
 
     ensure_tts_temp_dir()
     output_path = os.path.join(TTS_TEMP_DIR, f"wesal_gesture_{uuid.uuid4().hex}.mp3")
-    return asyncio.run(edge_tts_to_file(text.strip(), language, output_path))
+    try:
+        return asyncio.run(edge_tts_to_file(text.strip(), language, output_path))
+    except Exception as e:
+        tts_lang = "ar" if language == "Arabic" else "en"
+        try:
+            tts = gTTS(text=text.strip(), lang=tts_lang)
+            tts.save(output_path)
+            return output_path
+        except Exception as gtts_error:
+            raise RuntimeError(f"TTS failed (edge-tts then gTTS). edge-tts error: {e}; gTTS error: {gtts_error}")
 
 
 @app.route('/api/generate-speech', methods=['POST'])
@@ -579,10 +585,6 @@ def handle_tts_feedback(data):
             emit('tts_feedback', {'error': 'text is required'})
             return
 
-        if not EDGE_TTS_AVAILABLE:
-            emit('tts_feedback', {'error': 'TTS service is not available on the server'})
-            return
-
         language = payload.get('language')
         if language not in ('Arabic', 'English'):
             language = 'Arabic' if any('\u0600' <= ch <= '\u06FF' for ch in text) else 'English'
@@ -599,12 +601,12 @@ def handle_tts_feedback(data):
     except RuntimeError as e:
         print(f"❌ TTS Runtime Error: {e}")
         if '403' in str(e) or 'forbidden' in str(e).lower():
-            emit('tts_feedback', {'error': 'TTS service temporarily unavailable (403). Please try again later.'})
+            emit('tts_feedback', {'error': 'TTS service temporarily unavailable (403). Please try again later.', 'text': text})
         else:
-            emit('tts_feedback', {'error': f'TTS service error: {str(e)}'})
+            emit('tts_feedback', {'error': f'TTS service error: {str(e)}', 'text': text})
     except Exception as e:
         print(f"❌ get_tts_feedback error: {e}")
-        emit('tts_feedback', {'error': f'TTS generation failed: {str(e)}'})
+        emit('tts_feedback', {'error': f'TTS generation failed: {str(e)}', 'text': text})
 
 
 atexit.register(release_resources)
@@ -612,6 +614,6 @@ atexit.register(release_resources)
 
 if __name__ == '__main__':
     try:
-        socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+        socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
     finally:
         release_resources()
