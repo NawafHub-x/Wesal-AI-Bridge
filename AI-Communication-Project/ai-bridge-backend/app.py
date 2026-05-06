@@ -77,6 +77,11 @@ socketio = SocketIO(
     async_mode=SOCKETIO_ASYNC_MODE,
 )
 
+@app.route('/', methods=['GET'])
+def health_check():
+    # Railway health checks may hit '/' expecting a response.
+    return jsonify({'status': 'ok'}), 200
+
 # --- 1. Database Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'communication_bridge.db')
