@@ -54,14 +54,15 @@ IS_RAILWAY = any(
 IS_PRODUCTION = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILWAY
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# Global CORS configuration with wildcard origins
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Local dev CORS: allow Vite/React dev servers on common ports
+CORS(app, resources={r"/*": {"origins": ["http://localhost:3000", "http://localhost:5173"]}})
 
 # ── Socket.IO ─────────────────────────────────────────────────────────────────
+# Local dev: let Flask-SocketIO auto-select threading/eventlet
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
-    async_mode="gevent",
+    cors_allowed_origins=["http://localhost:3000", "http://localhost:5173"],
+    async_mode=None,
 )
 
 @app.route('/', methods=['GET'])
@@ -452,7 +453,7 @@ def initialize_gesture_recognizer():
     global gesture_recognizer
     if not MEDIAPIPE_AVAILABLE:
         raise RuntimeError('MediaPipe dependencies are not installed on backend server.')
-    model_path = os.path.join(os.path.dirname(__file__), 'gesture_recognizer.task')
+    model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'gesture_recognizer.task'))
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Gesture model not found at {model_path}")
 
@@ -614,6 +615,6 @@ atexit.register(release_resources)
 
 if __name__ == '__main__':
     try:
-        socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+        socketio.run(app, host='127.0.0.1', port=8080, debug=True)
     finally:
         release_resources()

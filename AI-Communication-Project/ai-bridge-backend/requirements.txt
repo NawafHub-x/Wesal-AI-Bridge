@@ -11,7 +11,7 @@ gunicorn==22.0.0
 # gevent-websocket is required alongside gevent for WebSocket support.
 gevent==24.2.1
 gevent-websocket==0.10.1
-opencv-python-headless==4.8.1.78
+opencv-python==4.8.1.78
 mediapipe==0.10.35
 numpy==1.24.3
 gTTS==2.5.1
