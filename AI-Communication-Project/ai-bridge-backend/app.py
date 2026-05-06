@@ -12,9 +12,9 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
+import numpy as np
 try:
     import cv2
-    import numpy as np
     import mediapipe as mp
     from mediapipe.tasks import python
     from mediapipe.tasks.python import vision
@@ -223,13 +223,22 @@ with app.app_context():
 # TTS SUPPORT
 # ============================================================================
 
-async def edge_tts_to_file(text, language, output_path):
+async def edge_tts_to_file(text, language, output_path, max_retries=3):
     if not EDGE_TTS_AVAILABLE:
         raise RuntimeError('edge_tts is not installed on backend server.')
+    
     voice = "ar-SA-ZariyahNeural" if language == "Arabic" else "en-US-JennyNeural"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
-    return output_path
+    
+    for attempt in range(max_retries):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(output_path)
+            return output_path
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise RuntimeError(f'TTS service failed after {max_retries} attempts: {str(e)}')
+            print(f'TTS attempt {attempt + 1} failed, retrying... Error: {e}')
+            await asyncio.sleep(1)
 
 
 def tts_model_sync(text, language):
@@ -579,6 +588,10 @@ def handle_tts_feedback(data):
             emit('tts_feedback', {'error': 'text is required'})
             return
 
+        if not EDGE_TTS_AVAILABLE:
+            emit('tts_feedback', {'error': 'TTS service is not available on the server'})
+            return
+
         language = payload.get('language')
         if language not in ('Arabic', 'English'):
             language = 'Arabic' if any('\u0600' <= ch <= '\u06FF' for ch in text) else 'English'
@@ -592,9 +605,15 @@ def handle_tts_feedback(data):
             'language': language,
             'audio_url': audio_url
         })
+    except RuntimeError as e:
+        print(f"❌ TTS Runtime Error: {e}")
+        if '403' in str(e) or 'forbidden' in str(e).lower():
+            emit('tts_feedback', {'error': 'TTS service temporarily unavailable (403). Please try again later.'})
+        else:
+            emit('tts_feedback', {'error': f'TTS service error: {str(e)}'})
     except Exception as e:
         print(f"❌ get_tts_feedback error: {e}")
-        emit('tts_feedback', {'error': str(e)})
+        emit('tts_feedback', {'error': f'TTS generation failed: {str(e)}'})
 
 
 atexit.register(release_resources)
