@@ -7,18 +7,26 @@ import base64
 import tempfile
 import uuid
 import asyncio
-import cv2
-import numpy as np
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
-import edge_tts
-import speech_recognition as sr
+try:
+    import cv2
+    import numpy as np
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+    MEDIAPIPE_AVAILABLE = True
+except Exception:
+    MEDIAPIPE_AVAILABLE = False
+
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except Exception:
+    EDGE_TTS_AVAILABLE = False
 
 # Authentication utilities
 from auth_utils import (
@@ -81,26 +89,6 @@ class Message(db.Model):
     sender_type = db.Column(db.String(10))
     timestamp = db.Column(db.DateTime, server_default=db.func.now())
 
-with app.app_context():
-    db.create_all()
-
-    if not SignLibrary.query.first():
-        initial_signs = [
-            SignLibrary(word="hello", image_path="/assets/signs/hello.gif"),
-            SignLibrary(word="water", image_path="/assets/signs/water.gif"),
-            SignLibrary(word="help", image_path="/assets/signs/help.gif")
-        ]
-        db.session.bulk_save_objects(initial_signs)
-        db.session.commit()
-        print("✅ Database initialized with sample signs.")
-
-    if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', full_name='Administrator', role='Admin')
-        admin.set_password('admin123')
-        db.session.add(admin)
-        db.session.commit()
-        print("✅ Default admin user created (username: admin, password: admin123)")
-
 connected_clients = {}
 gesture_recognizer = None
 
@@ -114,11 +102,84 @@ gesture_translation = {
     'ILoveYou': 'I LOVE YOU / APPRECIATION'
 }
 
+# --- Sign synonym mapping (English only) ---
+SYNONYM_MAP = {
+    'ok': ["ok", "okay", "fine", "good", "perfect", "deal"],
+    'hello': ["hello", "hi", "hey", "greetings", "welcome"],
+    'love': ["love", "heart", "like", "adore"],
+    'help': ["help", "assist", "save", "emergency", "support"],
+    'no': ["no", "never", "stop", "refuse", "negative"],
+    'pace': ["pace", "walk", "step", "slow"],
+    'angry': ["angry", "mad", "furious", "upset"]
+}
+
+# Map canonical key -> filename in public/assets/signs
+# Note: pace and angry use the exact filenames provided (with the 'sgin' typo)
+CANONICAL_TO_FILENAME = {
+    'ok': 'ok_sign.gif',
+    'hello': 'hello_sign.gif',
+    'love': 'love_sign.gif',
+    'help': 'help_sign.gif',
+    'no': 'no_sign.gif',
+    'pace': 'pace_sgin.gif',
+    'angry': 'angry_sgin.gif'
+}
+
+
+def find_sign_image_for_text(text: str):
+    """Return the sign image path for recognized text using synonym mapping.
+    Returns a relative path (e.g. /assets/signs/ok_sign.gif) or None.
+    """
+    if not text:
+        return None
+    text = text.lower()
+    # simple token-based match
+    words = [w.strip() for w in text.split() if w.strip()]
+    for canonical, synonyms in SYNONYM_MAP.items():
+        for w in words:
+            if w in synonyms:
+                fname = CANONICAL_TO_FILENAME.get(canonical)
+                if fname:
+                    path = f"/assets/signs/{fname}"
+                    print(f"🎬 find_sign_image_for_text('{text}') -> matched '{canonical}' -> returning '{path}'")
+                    return path
+    print(f"🎬 find_sign_image_for_text('{text}') -> NO MATCH, returning None")
+    return None
+
+with app.app_context():
+    db.create_all()
+
+    if not SignLibrary.query.first():
+        initial_signs = [
+            SignLibrary(word="hello", image_path="/assets/signs/hello_sign.gif"),
+            SignLibrary(word="love", image_path="/assets/signs/love_sign.gif"),
+            SignLibrary(word="ok", image_path="/assets/signs/ok_sign.gif"),
+            SignLibrary(word="help", image_path="/assets/signs/help_sign.gif"),
+            SignLibrary(word="no", image_path="/assets/signs/no_sign.gif"),
+            SignLibrary(word="pace", image_path="/assets/signs/pace_sgin.gif"),
+            SignLibrary(word="angry", image_path="/assets/signs/angry_sgin.gif"),
+            # keep previous useful entries if any
+            SignLibrary(word="water", image_path="/assets/signs/water.gif")
+        ]
+        db.session.bulk_save_objects(initial_signs)
+        db.session.commit()
+        print("✅ Database initialized with sample signs.")
+
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin', full_name='Administrator', role='Admin')
+        admin.set_password('admin123')
+        db.session.add(admin)
+        db.session.commit()
+        print("✅ Default admin user created (username: admin, password: admin123)")
+
+
 # ============================================================================
 # TTS SUPPORT
 # ============================================================================
 
 async def edge_tts_to_file(text, language, output_path):
+    if not EDGE_TTS_AVAILABLE:
+        raise RuntimeError('edge_tts is not installed on backend server.')
     voice = "ar-SA-ZariyahNeural" if language == "Arabic" else "en-US-JennyNeural"
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_path)
@@ -147,7 +208,8 @@ def generate_speech():
         with open(audio_path, 'rb') as audio_file:
             audio_base64 = base64.b64encode(audio_file.read()).decode('utf-8')
 
-        audio_url = f"http://127.0.0.1:5000/api/audio/{os.path.basename(audio_path)}"
+        base_url = request.host_url.rstrip('/')
+        audio_url = f"{base_url}/api/audio/{os.path.basename(audio_path)}"
         return jsonify({
             'text': text,
             'language': language,
@@ -334,6 +396,8 @@ def delete_sign(sign_id):
 
 def initialize_gesture_recognizer():
     global gesture_recognizer
+    if not MEDIAPIPE_AVAILABLE:
+        raise RuntimeError('MediaPipe dependencies are not installed on backend server.')
     model_path = os.path.join(os.path.dirname(__file__), 'gesture_recognizer.task')
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Gesture model not found at {model_path}")
@@ -413,15 +477,19 @@ def process_frame(data):
 def handle_blind_to_deaf(data):
     text = data.get('text', '').lower()
     sender_sid = request.sid
+    # first try database exact match
     sign_entry = SignLibrary.query.filter_by(word=text).first()
+    # fallback to synonym mapping
+    sign_url = sign_entry.image_path if sign_entry else find_sign_image_for_text(text)
     response_data = {
         'text': text,
-        'signUrl': sign_entry.image_path if sign_entry else None
+        'signUrl': sign_url
     }
+    print(f"📨 send_message from Blind user ({sender_sid}): text='{text}', signUrl='{sign_url}'")
     new_msg = Message(content=text, sender_type='blind')
     db.session.add(new_msg)
     db.session.commit()
-    print(f"📨 Blind user ({sender_sid}) sent: {text} → sending display_sign to Deaf user")
+    print(f"📨 Emitting display_sign to Deaf user: {response_data}")
     emit('display_sign', response_data, broadcast=True, include_self=False)
 
 
@@ -438,18 +506,47 @@ def handle_deaf_message(data):
 
 @socketio.on('voice_to_sign')
 def handle_voice_to_sign(data):
-    voice_text = data.get('text', '').lower()
+    voice_text = (data.get('text', '') or '').lower()
     sender_sid = request.sid
     sign_entry = SignLibrary.query.filter_by(word=voice_text).first()
+    sign_url = sign_entry.image_path if sign_entry else find_sign_image_for_text(voice_text)
     response_data = {
         'text': voice_text,
-        'signUrl': sign_entry.image_path if sign_entry else None
+        'signUrl': sign_url
     }
     new_msg = Message(content=voice_text, sender_type='blind')
     db.session.add(new_msg)
     db.session.commit()
     print(f"🎤 Blind user ({sender_sid}) said: {voice_text}")
     emit('display_sign', response_data, broadcast=True, include_self=False)
+
+
+@socketio.on('get_tts_feedback')
+def handle_tts_feedback(data):
+    """Generate Neural TTS audio and return it to requesting client."""
+    try:
+        payload = data or {}
+        text = (payload.get('text', '') or '').strip()
+        if not text:
+            emit('tts_feedback', {'error': 'text is required'})
+            return
+
+        language = payload.get('language')
+        if language not in ('Arabic', 'English'):
+            language = 'Arabic' if any('\u0600' <= ch <= '\u06FF' for ch in text) else 'English'
+
+        audio_path = tts_model_sync(text, language)
+        base_url = request.host_url.rstrip('/')
+        audio_url = f"{base_url}/api/audio/{os.path.basename(audio_path)}"
+
+        emit('tts_feedback', {
+            'text': text,
+            'language': language,
+            'audio_url': audio_url
+        })
+    except Exception as e:
+        print(f"❌ get_tts_feedback error: {e}")
+        emit('tts_feedback', {'error': str(e)})
 
 
 atexit.register(release_resources)

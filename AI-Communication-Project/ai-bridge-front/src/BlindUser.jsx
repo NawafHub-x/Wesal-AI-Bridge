@@ -1,18 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socket from './socket';
+import SpeechToText from './components/SpeechToText';
 import { 
   Mic, 
   Volume2, 
-  RefreshCcw, 
   PlusCircle, 
   Trash2, 
   CheckCircle, 
-  Send,
   ArrowLeft,
-  Headphones,
   Wifi,
-  Activity,
   MessageSquare
 } from 'lucide-react';
 
@@ -22,60 +19,45 @@ const BlindUser = () => {
   const [transcript, setTranscript] = useState(""); 
   const [readyToSend, setReadyToSend] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false); // Step 1: Review Mode
   const [composedMessage, setComposedMessage] = useState(""); // For concatenation
   const [lastPartnerMessage, setLastPartnerMessage] = useState(""); // For replay
-  const recognitionRef = useRef(null);
-  const transcriptRef = useRef(""); // Track accumulated transcript
+  const [speechError, setSpeechError] = useState("");
+  const transcriptRef = useRef(""); // Keep ref synced for existing decision controls
+  const currentAudioRef = useRef(null);
   const navigate = useNavigate();
-
-  const speak = (text) => {
-    if ('speechSynthesis' in window && text) {
-      const Utterance = window.SpeechSynthesisUtterance || window.webkitSpeechSynthesisUtterance;
-      const utterance = new Utterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = 1.0;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    }
-  };
 
   const isArabicText = (text) => /[\u0600-\u06FF]/.test(text);
 
-  const playGeneratedAudio = async (text) => {
+  const requestTtsFeedback = (text) => {
+    const cleanText = text?.trim();
+    if (!cleanText) return;
+
+    const language = isArabicText(cleanText) ? 'Arabic' : 'English';
+    socket.emit('get_tts_feedback', { text: cleanText, language });
+  };
+
+  const playAudioFromUrl = (audioUrl) => {
+    if (!audioUrl) return;
+
     try {
-      const language = isArabicText(text) ? 'Arabic' : 'English';
-      const response = await fetch('http://localhost:5000/api/generate-speech', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text, language })
-      });
-
-      if (!response.ok) {
-        console.error('Speech generation failed', response.statusText);
-        return;
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
       }
 
-      const result = await response.json();
-      if (result.audio_url) {
-        const audio = new Audio(result.audio_url);
-        audio.play().catch(err => console.error('Audio play failed', err));
-      } else if (result.audio_base64) {
-        const audio = new Audio(`data:audio/mpeg;base64,${result.audio_base64}`);
-        audio.play().catch(err => console.error('Audio play failed', err));
-      }
+      const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
+      audio.play().catch((err) => console.error('Audio play failed', err));
     } catch (err) {
-      console.error('Error fetching generated speech', err);
+      console.error('Error playing TTS audio', err);
     }
   };
 
   useEffect(() => {
     socket.on('connect', () => {
       setIsConnected(true);
-      speak('Connected');
+      requestTtsFeedback('Connected');
       console.log('✅ Connected to server');
     });
 
@@ -84,7 +66,22 @@ const BlindUser = () => {
       if (data && data.text && !data.text.includes('AI Prediction')) {
         setIncomingText(data.text);
         setLastPartnerMessage(data.text); // Store for replay
-        playGeneratedAudio(data.text);
+        requestTtsFeedback(data.text);
+      }
+    });
+
+    socket.on('tts_feedback', (data) => {
+      if (!data) return;
+      if (data.error) {
+        console.error('TTS feedback error:', data.error);
+        setSpeechError('Voice guidance is temporarily unavailable.');
+        return;
+      }
+
+      if (data.audio_url) {
+        playAudioFromUrl(data.audio_url);
+      } else if (data.audio_base64) {
+        playAudioFromUrl(`data:audio/mpeg;base64,${data.audio_base64}`);
       }
     });
 
@@ -103,70 +100,28 @@ const BlindUser = () => {
       socket.off('connect');
       socket.off('receive_message');
       socket.off('disconnect');
+      socket.off('tts_feedback');
     };
   }, []);
 
-  const handleVoiceInput = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+  const handleTranscriptChange = (updatedTranscript) => {
+    const normalizedTranscript = updatedTranscript.trim();
+    setTranscript(normalizedTranscript);
+    transcriptRef.current = normalizedTranscript;
+    setSpeechError("");
+    setIsReviewMode(Boolean(normalizedTranscript));
+    setReadyToSend(Boolean(normalizedTranscript));
+  };
 
-    const recognition = new SpeechRecognition();
-    recognitionRef.current = recognition;
-    recognition.lang = 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = true;
+  const handleFinalTranscript = (finalText) => {
+    const normalizedFinalText = finalText.trim().toLowerCase();
+    if (!normalizedFinalText) return;
 
-    recognition.onstart = () => {
-      setIsListening(true);
-      setReadyToSend(false);
-      transcriptRef.current = ""; // Clear ref when starting
-      setTranscript('');
-      if (navigator.vibrate) navigator.vibrate(100);
-    };
-    
-    recognition.onresult = (event) => {
-      let interimText = '';
-      
-      // Iterate through all results
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const text = event.results[i][0].transcript;
-        
-        if (event.results[i].isFinal) {
-          // Final result - accumulate in ref
-          transcriptRef.current += text + ' ';
-        } else {
-          // Interim result - show in real-time
-          interimText += text;
-        }
-      }
-      
-      // Display: accumulated + interim
-      const displayText = transcriptRef.current + interimText;
-      setTranscript(displayText.trim());
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      if (recognitionRef.current) recognitionRef.current = null;
-      
-      // Use the ref value (not state) to enable send button
-      const finalText = transcriptRef.current.trim();
-      if (finalText) {
-        setReadyToSend(true);
-        // Step 1: Convert (Auto-Review) - Immediately invoke Review Mode
-        setIsReviewMode(true);
-        speak(finalText);
-      } else {
-        setReadyToSend(false);
-      }
-    };
-    
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error', event.error);
-      setIsListening(false);
-    };
-    
-    recognition.start();
+    socket.emit('send_message', {
+      text: normalizedFinalText,
+      id: Date.now(),
+      sender: 'blind'
+    });
   };
 
   return (
@@ -284,15 +239,10 @@ const BlindUser = () => {
         }}>
           <button
             onClick={() => {
-              if (isListening) {
-                // stop
-                if (recognitionRef.current) recognitionRef.current.stop();
-                setIsListening(false);
-                setIsSpeaking(false);
-              } else {
-                // start
-                handleVoiceInput();
-              }
+              setSpeechError("");
+              setReadyToSend(false);
+              setIsReviewMode(false);
+              setIsListening((previous) => !previous);
             }}
             style={{
               width: '320px',
@@ -340,6 +290,40 @@ const BlindUser = () => {
           }}>
             {isListening ? 'Recording...' : 'Tap to Start / Tap again to Stop'}
           </p>
+
+          <SpeechToText
+            controlled
+            hideUI
+            isActive={isListening}
+            onTranscriptChange={handleTranscriptChange}
+            onFinalTranscript={handleFinalTranscript}
+            onListeningChange={(listening) => {
+              setIsListening(listening);
+              if (!listening && transcriptRef.current.trim()) {
+                setReadyToSend(true);
+                setIsReviewMode(true);
+                requestTtsFeedback(transcriptRef.current.trim());
+              }
+            }}
+            onErrorMessage={(message) => {
+              setSpeechError(message);
+              setIsListening(false);
+            }}
+          />
+
+          {speechError && (
+            <p style={{
+              marginTop: '14px',
+              padding: '10px 16px',
+              borderRadius: '9999px',
+              background: 'rgba(239, 68, 68, 0.1)',
+              color: '#7f1d1d',
+              fontWeight: 600,
+              border: '1px solid rgba(220, 38, 38, 0.2)'
+            }}>
+              {speechError}
+            </p>
+          )}
         </div>
 
         {/* Replay Partner's Voice Button */}
@@ -348,7 +332,7 @@ const BlindUser = () => {
             <button
               onClick={() => {
                 if (lastPartnerMessage) {
-                  playGeneratedAudio(lastPartnerMessage);
+                  requestTtsFeedback(lastPartnerMessage);
                 }
               }}
               style={{
@@ -432,8 +416,12 @@ const BlindUser = () => {
                 onClick={() => {
                   const textToSend = (composedMessage + ' ' + transcriptRef.current).trim();
                   if (!textToSend) return;
-                  socket.emit('send_message', { text: textToSend });
-                  speak('Message sent');
+                  socket.emit('send_message', {
+                    text: textToSend.toLowerCase(),
+                    id: Date.now(),
+                    sender: 'blind'
+                  });
+                  requestTtsFeedback('Message sent');
                   transcriptRef.current = '';
                   setTranscript('');
                   setReadyToSend(false);
@@ -477,7 +465,7 @@ const BlindUser = () => {
                   setIsReviewMode(false);
                   setTranscript('');
                   transcriptRef.current = '';
-                  handleVoiceInput();
+                  setIsListening(true);
                 }}
                 style={{
                   padding: '28px 24px',

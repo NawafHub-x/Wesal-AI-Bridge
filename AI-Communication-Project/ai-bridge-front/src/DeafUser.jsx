@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socket from './socket';
-import SignVisualizer3D from './SignVisualizer3D';
 import { 
   Video, 
   PlusCircle, 
@@ -15,11 +14,44 @@ import {
   ArrowLeft
 } from 'lucide-react';
 
+const SYNONYM_MAP = {
+  hello: ['hello', 'hi', 'hey'],
+  love: ['love', 'heart', 'like'],
+  ok: ['ok', 'okay', 'fine', 'good'],
+  help: ['help', 'assist', 'save'],
+  no: ['no', 'never', 'stop'],
+  pace: ['pace', 'walk', 'step'],
+  angry: ['angry', 'mad', 'furious'],
+};
+
+const GIF_BY_CANONICAL = {
+  hello: '/assets/signs/hello_sign.gif',
+  love: '/assets/signs/love_sign.gif',
+  ok: '/assets/signs/ok_sign.gif',
+  help: '/assets/signs/help_sign.gif',
+  no: '/assets/signs/no_sign.gif',
+  pace: '/assets/signs/pace_sgin.gif',
+  angry: '/assets/signs/angry_sgin.gif',
+};
+
+const mapTextToGifPath = (text = '') => {
+  const normalized = text.toLowerCase().trim();
+  if (!normalized) return null;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  for (const [canonical, synonyms] of Object.entries(SYNONYM_MAP)) {
+    if (words.some((word) => synonyms.includes(word))) {
+      return GIF_BY_CANONICAL[canonical];
+    }
+  }
+  return null;
+};
+
 function DeafUser() {
   const [streamActive, setStreamActive] = useState(false);
   const [currentPrediction, setCurrentPrediction] = useState("Waiting...");
   const [history, setHistory] = useState([]); 
-  const [incomingMessage, setIncomingMessage] = useState({ text: "", signUrl: null });
+  const [incomingMessage, setIncomingMessage] = useState({ id: 0, text: "", signUrl: null });
   const [isDetecting, setIsDetecting] = useState(false);
   // Sentence Builder States
   const [compositionBuffer, setCompositionBuffer] = useState("");
@@ -31,8 +63,12 @@ function DeafUser() {
   useEffect(() => {
     socket.on('display_sign', (data) => {
       // Message from Blind user (voice converted to sign)
-      setIncomingMessage({ text: data.text, signUrl: data.signUrl });
-      console.log('📨 Received display_sign from Blind user:', data.text);
+      console.log('📨 Received display_sign event:', data);
+      const text = data?.text || '';
+      const mappedPath = mapTextToGifPath(text);
+      const finalPath = data?.signUrl || mappedPath;
+      console.log("Received text:", text, "Mapped Path:", finalPath);
+      setIncomingMessage((prev) => ({ id: prev.id + 1, text, signUrl: finalPath }));
     });
 
     socket.on('new_sign', (data) => {
@@ -46,7 +82,10 @@ function DeafUser() {
     socket.on('receive_message', (data) => {
       console.log('📨 Received message event:', data);
       if (data.text) {
-        setIncomingMessage({ text: data.text, signUrl: null });
+        const text = data.text;
+        const mappedPath = mapTextToGifPath(text);
+        console.log("Received text:", text, "Mapped Path:", mappedPath);
+        setIncomingMessage((prev) => ({ id: prev.id + 1, text, signUrl: mappedPath }));
         console.log('📨 Received message from Blind user:', data.text);
       }
     });
@@ -645,40 +684,62 @@ function DeafUser() {
                     {incomingMessage.text || "Waiting..."}
                   </p>
                 </div>
-                {incomingMessage.text && incomingMessage.text.toLowerCase() === 'hello' ? (
-                  <div className="h-64 w-full" style={{
-                    width: '100%',
-                    height: '16rem',
-                    background: '#FAF7F0',
-                    border: '2px solid #3A5A40',
-                    borderRadius: '2.5rem',
-                    overflow: 'hidden',
-                    boxShadow: '0 8px 32px rgba(58, 90, 64, 0.12)'
-                  }}>
-                    {console.log('🔄 Rendering SignVisualizer3D for incoming message:', incomingMessage.text)}
-                    <SignVisualizer3D key={incomingMessage.text ? incomingMessage.text.toLowerCase() : 'no-msg'} message={incomingMessage.text} />
-                  </div>
-                ) : (
-                  <div style={{
-                    width: '100%',
-                    height: '300px',
-                    background: '#FAF7F0',
-                    border: '2px solid #3A5A40',
-                    borderRadius: '2.5rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#588157',
-                    fontWeight: '600',
-                    fontSize: '1rem',
-                    boxShadow: '0 8px 32px rgba(58, 90, 64, 0.12)',
-                    position: 'relative'
-                  }}>
+                {/* Render GIF (if available) with transparency effect */}
+                <div style={{
+                  width: '100%',
+                  minHeight: '16rem',
+                  background: '#FAF7F0',
+                  border: '2px solid #3A5A40',
+                  borderRadius: '2.5rem',
+                  overflow: 'hidden',
+                  boxShadow: '0 8px 32px rgba(58, 90, 64, 0.12)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative'
+                }}>
+                  {incomingMessage.signUrl ? (
+                    <div style={{
+                      width: '100%',
+                      height: '100%',
+                      background: '#000000',
+                      borderRadius: '15px',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px'
+                    }}>
+                      {console.log('🎬 Rendering image with src:', incomingMessage.signUrl, 'for text:', incomingMessage.text)}
+                      <img
+                        key={incomingMessage.id}
+                        src={incomingMessage.signUrl}
+                        alt={incomingMessage.text || 'sign'}
+                        onError={(e) => {
+                          console.error('❌ Image failed to load:', e.target.src);
+                          e.target.style.display = 'none';
+                        }}
+                        onLoad={(e) => {
+                          console.log('✅ Image loaded successfully:', e.target.src);
+                        }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain',
+                          display: 'block',
+                          pointerEvents: 'none'
+                        }}
+                      />
+                    </div>
+                  ) : (
                     <div style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '12px',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      color: '#588157',
+                      fontWeight: '600',
+                      fontSize: '1rem'
                     }}>
                       <div style={{
                         width: '12px',
@@ -687,10 +748,10 @@ function DeafUser() {
                         background: '#588157',
                         animation: 'pulse 2s infinite'
                       }} />
-                      <span>Waiting for sign...</span>
+                      <span>{incomingMessage.text ? incomingMessage.text : 'Waiting for sign...'}</span>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>

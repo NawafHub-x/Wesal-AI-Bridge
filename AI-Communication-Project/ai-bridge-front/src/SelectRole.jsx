@@ -7,10 +7,15 @@ const SelectRole = () => {
 
   const handleSelectRole = (role) => {
     setLoading(true);
-    // Store role choice in localStorage for later reference
-    localStorage.setItem('bridge_selected_role', role);
-    // Navigate to login
-    navigate('/login');
+    if (role === 'Blind') {
+      navigate('/audio-mode');
+      return;
+    }
+    if (role === 'Deaf') {
+      navigate('/visual-mode');
+      return;
+    }
+    navigate('/select-role');
   };
 
   return (
@@ -161,40 +166,6 @@ const SelectRole = () => {
               </div>
             </button>
 
-            {/* Admin Button */}
-            <button
-              onClick={() => handleSelectRole('Admin')}
-              disabled={loading}
-              style={{
-                background: 'linear-gradient(135deg, #D8F3DC, #95D5B2)',
-                border: 'none',
-                color: '#1B4332',
-                padding: '20px 24px',
-                borderRadius: '16px',
-                fontSize: '1.1rem',
-                fontWeight: '600',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                opacity: loading ? 0.7 : 1,
-                transition: 'all 0.3s ease',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '16px',
-                boxShadow: '0 10px 30px rgba(64, 145, 108, 0.15)'
-              }}
-              onMouseEnter={(e) => !loading && (e.target.style.boxShadow = '0 15px 40px rgba(64, 145, 108, 0.25)')}
-              onMouseLeave={(e) => !loading && (e.target.style.boxShadow = '0 10px 30px rgba(64, 145, 108, 0.15)')}
-            >
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0z" fill="#1B4332"/>
-                <path d="M18 8a2 2 0 11-4 0 2 2 0 014 0z" fill="#1B4332"/>
-                <path d="M14 15a6 6 0 00-12 0v3h12v-3z" fill="#1B4332"/>
-                <path d="M16 11a4 4 0 110 8 4 4 0 010-8z" fill="#1B4332" opacity="0.8"/>
-              </svg>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontWeight: '700' }}>I am Admin</div>
-                <div style={{ fontSize: '0.9rem', opacity: '0.8', color: '#2D6A4F' }}>Management Portal</div>
-              </div>
-            </button>
           </div>
         </div>
 
