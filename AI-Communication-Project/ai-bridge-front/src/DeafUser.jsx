@@ -57,6 +57,7 @@ function DeafUser() {
   const [compositionBuffer, setCompositionBuffer] = useState("");
   const [isFinalized, setIsFinalized] = useState(false);
   const videoRef = useRef(null);
+  const mediaStreamRef = useRef(null);
   const intervalRef = useRef(null);
   const navigate = useNavigate();
 
@@ -118,6 +119,23 @@ function DeafUser() {
     return () => clearInterval(intervalRef.current);
   }, [streamActive]);
 
+  const stopCamera = () => {
+    clearInterval(intervalRef.current);
+
+    const stream = mediaStreamRef.current || videoRef.current?.srcObject;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+
+    mediaStreamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setStreamActive(false);
+    setIsDetecting(false);
+  };
+
   const handleConfirmSend = () => {
     if (currentPrediction !== "Waiting...") {
       setHistory(prev => [currentPrediction, ...prev].slice(0, 5));
@@ -130,8 +148,11 @@ function DeafUser() {
 
   const startCamera = async () => {
     try {
+      // Ensure any previous stream is fully closed before opening a new one.
+      stopCamera();
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       if (videoRef.current) { 
+        mediaStreamRef.current = stream;
         videoRef.current.srcObject = stream; 
         setStreamActive(true); 
       }
@@ -139,6 +160,12 @@ function DeafUser() {
       alert("Enable camera access."); 
     }
   };
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   return (
     <div style={{
@@ -307,7 +334,7 @@ function DeafUser() {
               gap: '12px'
             }}>
               <button
-                onClick={streamActive ? () => setStreamActive(false) : startCamera}
+                onClick={streamActive ? stopCamera : startCamera}
                 style={{
                   flex: 1,
                   padding: '12px 20px',
