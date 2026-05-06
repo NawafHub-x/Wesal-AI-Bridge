@@ -23,6 +23,7 @@ const BlindUser = () => {
   const [composedMessage, setComposedMessage] = useState(""); // For concatenation
   const [lastPartnerMessage, setLastPartnerMessage] = useState(""); // For replay
   const [speechError, setSpeechError] = useState("");
+  const [speechToTextResetKey, setSpeechToTextResetKey] = useState(0);
   const transcriptRef = useRef(""); // Keep ref synced for existing decision controls
   const currentAudioRef = useRef(null);
   const navigate = useNavigate();
@@ -292,6 +293,7 @@ const BlindUser = () => {
           </p>
 
           <SpeechToText
+            key={speechToTextResetKey}
             controlled
             hideUI
             isActive={isListening}
@@ -421,9 +423,12 @@ const BlindUser = () => {
                     id: Date.now(),
                     sender: 'blind'
                   });
-                  requestTtsFeedback('Message sent');
+                  // Clear the Review Mode transcribed text immediately after emitting.
+                  // Also bump SpeechToText key to reset its internal transcript state (prevents mixing).
                   transcriptRef.current = '';
                   setTranscript('');
+                  setSpeechToTextResetKey((prev) => prev + 1);
+                  requestTtsFeedback('Message sent');
                   setReadyToSend(false);
                   setIsReviewMode(false);
                   setComposedMessage("");

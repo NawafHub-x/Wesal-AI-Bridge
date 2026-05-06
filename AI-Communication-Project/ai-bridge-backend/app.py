@@ -38,12 +38,26 @@ from config import *
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', SECRET_KEY)
-ALLOWED_ORIGINS = [
-    os.getenv('FRONTEND_URL', 'https://wesal-ai-bridge.vercel.app')
-]
+ALLOWED_ORIGINS = "*"
 
-CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='threading')
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+# Socket.IO async mode:
+# - Railway/production: force gevent (matches deployment stack)
+# - Local dev: let Flask-SocketIO auto-pick (avoids "Invalid async_mode specified")
+IS_RAILWAY = any(
+    os.getenv(var)
+    for var in (
+        "RAILWAY_ENVIRONMENT",
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_SERVICE_ID",
+        "RAILWAY_STATIC_URL",
+    )
+)
+IS_PRODUCTION_ENV = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILWAY
+SOCKETIO_ASYNC_MODE = "gevent" if IS_PRODUCTION_ENV else None
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=SOCKETIO_ASYNC_MODE)
 
 # --- 1. Database Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
