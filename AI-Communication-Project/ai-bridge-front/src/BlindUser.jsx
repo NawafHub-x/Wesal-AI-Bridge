@@ -55,6 +55,26 @@ const BlindUser = () => {
     }
   };
 
+  const speakWithBrowser = (text) => {
+    if (!text || !window.speechSynthesis) return;
+    
+    try {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = isArabicText(text) ? 'ar-SA' : 'en-US';
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.error('Browser speech synthesis failed', err);
+    }
+  };
+
   useEffect(() => {
     socket.on('connect', () => {
       setIsConnected(true);
@@ -76,6 +96,10 @@ const BlindUser = () => {
       if (data.error) {
         console.error('TTS feedback error:', data.error);
         setSpeechError('Voice guidance is temporarily unavailable.');
+        // Fallback to browser speech synthesis
+        if (data.text) {
+          speakWithBrowser(data.text);
+        }
         return;
       }
 
@@ -83,6 +107,9 @@ const BlindUser = () => {
         playAudioFromUrl(data.audio_url);
       } else if (data.audio_base64) {
         playAudioFromUrl(`data:audio/mpeg;base64,${data.audio_base64}`);
+      } else if (data.text) {
+        // Fallback to browser speech synthesis if no audio provided
+        speakWithBrowser(data.text);
       }
     });
 

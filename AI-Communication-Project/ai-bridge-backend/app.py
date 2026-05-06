@@ -13,8 +13,8 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
 import numpy as np
+import cv2
 try:
-    import cv2
     import mediapipe as mp
     from mediapipe.tasks import python
     from mediapipe.tasks.python import vision
@@ -53,17 +53,8 @@ IS_RAILWAY = any(
 IS_PRODUCTION = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILWAY
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# Production: restrict to the known frontend URL (set FRONTEND_URL on Railway).
-# Local dev:  allow everything so the Vite dev server on any port can connect.
-# NOTE: supports_credentials=True requires an explicit origin list (not "*"),
-#       because browsers reject credentialed requests to a wildcard origin.
-#       We never mix "*" with supports_credentials=True.
-if IS_PRODUCTION:
-    ALLOWED_ORIGINS = "*"
-    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
-else:
-    ALLOWED_ORIGINS = "*"
-    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+# Global CORS configuration with wildcard origins
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ── Socket.IO ─────────────────────────────────────────────────────────────────
 # async_mode="gevent"  → Railway/production (gunicorn + gevent workers)
@@ -72,7 +63,7 @@ SOCKETIO_ASYNC_MODE = "gevent" if IS_PRODUCTION else None
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins=ALLOWED_ORIGINS,
+    cors_allowed_origins="*",
     async_mode=SOCKETIO_ASYNC_MODE,
 )
 

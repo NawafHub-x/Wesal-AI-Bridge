@@ -11,10 +11,11 @@ gunicorn==22.0.0
 # gevent-websocket is required alongside gevent for WebSocket support.
 gevent==24.2.1
 gevent-websocket==0.10.1
-opencv-python==4.8.0.76
+opencv-python-headless==4.8.0.76
 mediapipe==0.10.35
 # numpy: pin to >=1.26 to get pre-built wheels for Python 3.12 (avoids build failures).
 numpy>=1.26,<2
+gTTS==2.5.1
 edge-tts==6.1.1
 SpeechRecognition==3.10.0
 Werkzeug==2.3.7
