@@ -38,26 +38,44 @@ from config import *
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', SECRET_KEY)
-ALLOWED_ORIGINS = "*"
 
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
-
-# Socket.IO async mode:
-# - Railway/production: force gevent (matches deployment stack)
-# - Local dev: let Flask-SocketIO auto-pick (avoids "Invalid async_mode specified")
+# ── Environment detection ─────────────────────────────────────────────────────
+# Railway injects at least one of these variables at runtime.
 IS_RAILWAY = any(
-    os.getenv(var)
-    for var in (
+    os.getenv(v)
+    for v in (
         "RAILWAY_ENVIRONMENT",
         "RAILWAY_PROJECT_ID",
         "RAILWAY_SERVICE_ID",
         "RAILWAY_STATIC_URL",
     )
 )
-IS_PRODUCTION_ENV = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILWAY
-SOCKETIO_ASYNC_MODE = "gevent" if IS_PRODUCTION_ENV else None
+IS_PRODUCTION = (os.getenv("FLASK_ENV", "").lower() == "production") or IS_RAILWAY
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=SOCKETIO_ASYNC_MODE)
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Production: restrict to the known frontend URL (set FRONTEND_URL on Railway).
+# Local dev:  allow everything so the Vite dev server on any port can connect.
+# NOTE: supports_credentials=True requires an explicit origin list (not "*"),
+#       because browsers reject credentialed requests to a wildcard origin.
+#       We never mix "*" with supports_credentials=True.
+if IS_PRODUCTION:
+    _frontend_url = os.getenv("FRONTEND_URL", "https://wesal-ai-bridge.vercel.app")
+    ALLOWED_ORIGINS = [_frontend_url]
+    CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
+else:
+    ALLOWED_ORIGINS = "*"
+    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+
+# ── Socket.IO ─────────────────────────────────────────────────────────────────
+# async_mode="gevent"  → Railway/production (gunicorn + gevent workers)
+# async_mode=None      → local dev (Flask-SocketIO auto-selects threading/eventlet)
+SOCKETIO_ASYNC_MODE = "gevent" if IS_PRODUCTION else None
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=ALLOWED_ORIGINS,
+    async_mode=SOCKETIO_ASYNC_MODE,
+)
 
 # --- 1. Database Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
